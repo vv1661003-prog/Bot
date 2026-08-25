@@ -7,11 +7,11 @@ app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
 const { gameState, sleep, getFormattedUser, checkAnswer, nextRound, advanceType, handleCountdownSpam } = require('./gameManager');
 
+// 👑 قائمة الملاّك الرئيسية
 const OWNER_LIDS = [
     '86582883303620@lid',
     '203857015660599@lid',
@@ -34,12 +34,12 @@ async function connectToWhatsApp() {
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        // طباعة رمز الـ QR في السجلات عند طلبه
+        // إنشاء رابط مباشر للـ QR عند طلبه
         if (qr) {
             console.log('\n====================================');
-            console.log('📱 امسح رمز الـ QR التالي بواسطة واتساب:');
+            console.log('🔗 افتح هذا الرابط في المتصفح لمسح الـ QR:');
+            console.log(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`);
             console.log('====================================\n');
-            qrcode.generate(qr, { small: true });
         }
 
         if (connection === 'close') {
@@ -51,7 +51,7 @@ async function connectToWhatsApp() {
                 await sleep(5000);
                 connectToWhatsApp();
             } else {
-                console.log('❌ تم تسجيل الخروج.');
+                console.log('❌ تم تسجيل الخروج. يرجى حذف مجلد auth_info وإعادة التشغيل.');
             }
         } else if (connection === 'open') {
             console.log('\n====================================');
