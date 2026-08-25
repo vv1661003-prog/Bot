@@ -44,6 +44,8 @@ async function connectToWhatsApp() {
             const code = await sock.requestPairingCode(phoneNumber.trim());
             console.log(`🔑 رمز الاقتران الخاص بك هو: [ ${code} ]`);
             console.log('====================================\n');
+            // ⏳ الانتظار لمدة 30 ثانية لتدخل الكود في الواتساب دون سقوط السيرفر
+            await sleep(30000);
         } catch (err) {
             console.error('❌ حدث خطأ أثناء طلب رمز الإقران:', err);
         }
