@@ -20,6 +20,7 @@ const OWNER_LIDS = [
 
 // 🛑 متغير وضع الإيقاف/التشغيل
 let isBotOff = false;
+let pairingRequested = false;
 
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
@@ -30,42 +31,49 @@ async function connectToWhatsApp() {
         logger: pino({ level: 'silent' })
     });
 
-    if (!sock.authState.creds.registered) {
-        console.log('\n====================================');
-        const phoneNumber = process.env.PHONE_NUMBER;
-
-        if (!phoneNumber) {
-            console.error('❌ خطأ: لم يتم ضبط متغير البيئة PHONE_NUMBER في Render!');
-            console.log('====================================\n');
-            return;
-        }
-
-        try {
-            const code = await sock.requestPairingCode(phoneNumber.trim());
-            console.log(`🔑 رمز الاقتران الخاص بك هو: [ ${code} ]`);
-            console.log('====================================\n');
-            // ⏳ الانتظار لمدة 30 ثانية لتدخل الكود في الواتساب دون سقوط السيرفر
-            await sleep(30000);
-        } catch (err) {
-            console.error('❌ حدث خطأ أثناء طلب رمز الإقران:', err);
-        }
-    }
-
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        // طلب كود الإقران عند جاهزية الاتصال وعدم التسجيل المسبق
+        if (qr && !sock.authState.creds.registered && !pairingRequested) {
+            pairingRequested = true;
+            const phoneNumber = process.env.PHONE_NUMBER;
+
+            if (!phoneNumber) {
+                console.error('❌ خطأ: لم يتم ضبط متغير البيئة PHONE_NUMBER في Render!');
+                return;
+            }
+
+            // انتظار قصير لتأكيد استقرار websocket
+            await sleep(3000);
+
+            try {
+                const code = await sock.requestPairingCode(phoneNumber.trim());
+                console.log('\n====================================');
+                console.log(`🔑 رمز الاقتران الخاص بك هو: [ ${code} ]`);
+                console.log('====================================\n');
+            } catch (err) {
+                console.error('❌ حدث خطأ أثناء طلب رمز الإقران:', err);
+                pairingRequested = false;
+            }
+        }
 
         if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
+            pairingRequested = false;
+            const statusCode = (lastDisconnect?.error)?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
             console.log('⚠️ تم قطع الاتصال...');
             if (shouldReconnect) {
                 console.log('🔄 جاري إعادة الاتصال بالواتساب...\n');
+                await sleep(5000);
                 connectToWhatsApp();
             } else {
                 console.log('❌ تم تسجيل الخروج. يرجى حذف مجلد auth_info وإعادة التشغيل.');
             }
         } else if (connection === 'open') {
+            pairingRequested = false;
             console.log('\n====================================');
             console.log('✅ تم الاتصال بالواتساب بنجاح! البوت يعمل الآن ⚡');
             console.log('====================================\n');
@@ -85,7 +93,6 @@ async function connectToWhatsApp() {
 
             if (!text.trim()) continue;
 
-            // فحص هل المرسل مالك (من ضمن القائمة أو البوت نفسه)
             const isOwner = OWNER_LIDS.some(owner => {
                 const cleanOwner = owner.split('@')[0];
                 return owner === senderLid || owner === senderJid || senderLid.includes(cleanOwner) || senderJid.includes(cleanOwner);
@@ -108,9 +115,6 @@ async function connectToWhatsApp() {
 
             const cleanText = text.trim();
 
-            // ----------------------------------------------------
-            // 🔒 أوامر التشغيل والإيقاف (للمُلاّك فقط)
-            // ----------------------------------------------------
             if (isOwner) {
                 if (cleanText === '.off') {
                     if (isBotOff) {
@@ -129,18 +133,15 @@ async function connectToWhatsApp() {
                 }
             }
 
-            // 🛑 حارس التوقف: إذا كان البوت مطفأ يتجاهل كل الأوامر والفعاليات
             if (isBotOff) continue;
 
             const context = msg.message?.extendedTextMessage?.contextInfo;
             const participantJid = msg.key.participant || context?.participant || msg.key.participantAlt || senderLid;
 
-            // ❄️ ممر التجميد: يراقب الرسائل أثناء العد التنازلي ويرد بريبلاي على الرسالة نفسها
             if (gameState.active && from === gameState.chatId) {
                 await handleCountdownSpam(sock, participantJid, msg);
             }
 
-            // 1. فحص إجابات المشاركين للفعالية
             if (gameState.active && !gameState.paused && gameState.acceptingAnswers && from === gameState.chatId) {
                 const userText = text.trim();
 
@@ -191,7 +192,6 @@ async function connectToWhatsApp() {
                 }
             }
 
-            // 2. معالجة الأوامر للمالك والنخبة
             if (!isNukhba) continue;
 
             const args = cleanText.split(/ +/);
