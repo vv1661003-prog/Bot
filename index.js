@@ -25,7 +25,7 @@ async function connectToWhatsApp() {
 
     const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: false, // 👈 تم إيقاف طباعة الـ QR النصي لتفادي التشويه
+        printQRInTerminal: false, // تعطيل طباعة المربعات نهائياً
         logger: pino({ level: 'silent' })
     });
 
@@ -34,12 +34,12 @@ async function connectToWhatsApp() {
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        // طباعة رابط صورة الـ QR فقط عند طلبه
+        // طباعة رابط الصورة المباشر فقط عند توليد الـ QR
         if (qr) {
-            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`;
+            const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=${encodeURIComponent(qr)}`;
             console.log('\n====================================');
-            console.log('🔗 افتح هذا الرابط في المتصفح لمسح الـ QR:');
-            console.log(qrUrl);
+            console.log('🔗 افتح هذا الرابط لمسح صورة الـ QR مباشرة:');
+            console.log(qrImageUrl);
             console.log('====================================\n');
         }
 
