@@ -7,20 +7,18 @@ app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
+const qrcode = require('qrcode-terminal');
 const fs = require('fs');
 const path = require('path');
 const { gameState, sleep, getFormattedUser, checkAnswer, nextRound, advanceType, handleCountdownSpam } = require('./gameManager');
 
-// 👑 قائمة الملاّك الرئيسية (الأساسي + الجدد)
 const OWNER_LIDS = [
     '86582883303620@lid',
     '203857015660599@lid',
     '12679481655486@lid'
 ];
 
-// 🛑 متغير وضع الإيقاف/التشغيل
 let isBotOff = false;
-let pairingRequested = false;
 
 async function connectToWhatsApp() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
@@ -36,44 +34,26 @@ async function connectToWhatsApp() {
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
-        // طلب كود الإقران عند جاهزية الاتصال وعدم التسجيل المسبق
-        if (qr && !sock.authState.creds.registered && !pairingRequested) {
-            pairingRequested = true;
-            const phoneNumber = process.env.PHONE_NUMBER;
-
-            if (!phoneNumber) {
-                console.error('❌ خطأ: لم يتم ضبط متغير البيئة PHONE_NUMBER في Render!');
-                return;
-            }
-
-            // انتظار قصير لتأكيد استقرار websocket
-            await sleep(3000);
-
-            try {
-                const code = await sock.requestPairingCode(phoneNumber.trim());
-                console.log('\n====================================');
-                console.log(`🔑 رمز الاقتران الخاص بك هو: [ ${code} ]`);
-                console.log('====================================\n');
-            } catch (err) {
-                console.error('❌ حدث خطأ أثناء طلب رمز الإقران:', err);
-                pairingRequested = false;
-            }
+        // طباعة رمز الـ QR في السجلات عند طلبه
+        if (qr) {
+            console.log('\n====================================');
+            console.log('📱 امسح رمز الـ QR التالي بواسطة واتساب:');
+            console.log('====================================\n');
+            qrcode.generate(qr, { small: true });
         }
 
         if (connection === 'close') {
-            pairingRequested = false;
             const statusCode = (lastDisconnect?.error)?.output?.statusCode;
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
             console.log('⚠️ تم قطع الاتصال...');
             if (shouldReconnect) {
-                console.log('🔄 جاري إعادة الاتصال بالواتساب...\n');
+                console.log('🔄 جاري إعادة الاتصال...\n');
                 await sleep(5000);
                 connectToWhatsApp();
             } else {
-                console.log('❌ تم تسجيل الخروج. يرجى حذف مجلد auth_info وإعادة التشغيل.');
+                console.log('❌ تم تسجيل الخروج.');
             }
         } else if (connection === 'open') {
-            pairingRequested = false;
             console.log('\n====================================');
             console.log('✅ تم الاتصال بالواتساب بنجاح! البوت يعمل الآن ⚡');
             console.log('====================================\n');
@@ -117,19 +97,15 @@ async function connectToWhatsApp() {
 
             if (isOwner) {
                 if (cleanText === '.off') {
-                    if (isBotOff) {
-                        return await sock.sendMessage(from, { text: '⚠️ البوت متوقف بالفعل!' }, { quoted: msg });
-                    }
+                    if (isBotOff) return await sock.sendMessage(from, { text: '⚠️ البوت متوقف بالفعل!' }, { quoted: msg });
                     isBotOff = true;
-                    return await sock.sendMessage(from, { text: '🔇 تم إيقاف استقبال الأوامر.\nلن يستجيب البوت لأي أمر حتى كتابة *.on*' }, { quoted: msg });
+                    return await sock.sendMessage(from, { text: '🔇 تم إيقاف استقبال الأوامر.' }, { quoted: msg });
                 }
 
                 if (cleanText === '.on') {
-                    if (!isBotOff) {
-                        return await sock.sendMessage(from, { text: '✅ البوت شغال بالفعل!' }, { quoted: msg });
-                    }
+                    if (!isBotOff) return await sock.sendMessage(from, { text: '✅ البوت شغال بالفعل!' }, { quoted: msg });
                     isBotOff = false;
-                    return await sock.sendMessage(from, { text: '🔊 تم تفعيل البوت واستئناف استقبال جميع الأوامر بنجاح!' }, { quoted: msg });
+                    return await sock.sendMessage(from, { text: '🔊 تم تفعيل البوت واستئناف استقبال الأوامر!' }, { quoted: msg });
                 }
             }
 
@@ -155,35 +131,23 @@ async function connectToWhatsApp() {
                     const mentions = [];
                     const scoreLines = Object.entries(gameState.scores).map(([jid, pts]) => {
                         const userInfo = getFormattedUser(jid);
-                        if (userInfo.isMention) {
-                            mentions.push(userInfo.jid);
-                        }
+                        if (userInfo.isMention) mentions.push(userInfo.jid);
                         return `${userInfo.text} ${pts}`;
                     });
 
-                    const scoreListText = scoreLines.join('\n');
-
                     await sock.sendMessage(from, {
-                        text: scoreListText,
+                        text: scoreLines.join('\n'),
                         mentions: mentions.length > 0 ? mentions : undefined
                     }, { quoted: msg });
 
                     if (currentPoints >= gameState.targetPoints) {
                         gameState.active = false;
                         await sleep(500);
-
                         const userInfo = getFormattedUser(participantJid);
-
-                        if (!userInfo.isMention) {
-                            await sock.sendMessage(from, {
-                                text: `${userInfo.text} فنشششش`
-                            });
-                        } else {
-                            await sock.sendMessage(from, {
-                                text: `@${participantJid.split('@')[0]} فنشششش`,
-                                mentions: [participantJid]
-                            });
-                        }
+                        await sock.sendMessage(from, {
+                            text: userInfo.isMention ? `@${participantJid.split('@')[0]} فنشششش` : `${userInfo.text} فنشششش`,
+                            mentions: userInfo.isMention ? [participantJid] : []
+                        });
                     } else {
                         advanceType();
                         await sleep(500);
