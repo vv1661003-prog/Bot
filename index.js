@@ -7,15 +7,11 @@ app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
 
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const readline = require('readline');
 const fs = require('fs');
 const path = require('path');
 const { gameState, sleep, getFormattedUser, checkAnswer, nextRound, advanceType, handleCountdownSpam } = require('./gameManager');
 
-const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-const question = (text) => new Promise((resolve) => rl.question(text, resolve));
-
-// 👑 قائمة الملاّك الرئيسيّة (الأساسي + الجدد)
+// 👑 قائمة الملاّك الرئيسية (الأساسي + الجدد)
 const OWNER_LIDS = [
     '86582883303620@lid',
     '203857015660599@lid',
@@ -36,10 +32,21 @@ async function connectToWhatsApp() {
 
     if (!sock.authState.creds.registered) {
         console.log('\n====================================');
-        const phoneNumber = await question('📌 أدخل رقم هاتف البوت مع مفتاح الدولة (مثال 967XXXXXXXX): ');
-        const code = await sock.requestPairingCode(phoneNumber.trim());
-        console.log(`\n🔑 رمز الاقتران الخاص بك هو: [ ${code} ]`);
-        console.log('====================================\n');
+        const phoneNumber = process.env.PHONE_NUMBER;
+
+        if (!phoneNumber) {
+            console.error('❌ خطأ: لم يتم ضبط متغير البيئة PHONE_NUMBER في Render!');
+            console.log('====================================\n');
+            return;
+        }
+
+        try {
+            const code = await sock.requestPairingCode(phoneNumber.trim());
+            console.log(`🔑 رمز الاقتران الخاص بك هو: [ ${code} ]`);
+            console.log('====================================\n');
+        } catch (err) {
+            console.error('❌ حدث خطأ أثناء طلب رمز الإقران:', err);
+        }
     }
 
     sock.ev.on('creds.update', saveCreds);
@@ -140,7 +147,6 @@ async function connectToWhatsApp() {
                     if (gameState.roundTimer) clearTimeout(gameState.roundTimer);
 
                     gameState.scores[participantJid] = (gameState.scores[participantJid] || 0) + 1;
-
                     const currentPoints = gameState.scores[participantJid];
 
                     const mentions = [];
