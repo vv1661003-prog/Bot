@@ -125,7 +125,8 @@ const {
     checkAnswer,
     nextRound,
     advanceType,
-    handleCountdownSpam
+    handleCountdownSpam,
+    handleFinishAndUpdateGroup
 } = require('./gameManager');
 
 
@@ -141,7 +142,6 @@ let isBotOff = false;
 
 // ==============================
 // الاتصال بالواتساب
-// ==============================
 
 async function connectToWhatsApp() {
 
@@ -280,7 +280,6 @@ async function connectToWhatsApp() {
 
 
             if (!text.trim()) continue;
-
 
             // ==============================
             // التحقق من المالك
@@ -545,7 +544,7 @@ async function connectToWhatsApp() {
 
 
                     // ==============================
-                    // فوز اللاعب
+                    // فوز اللاعب والتفنيش
                     // ==============================
 
                     if (
@@ -553,17 +552,12 @@ async function connectToWhatsApp() {
                         gameState.targetPoints
                     ) {
 
-                        gameState.active = false;
-
-
                         await sleep(500);
-
 
                         const userInfo =
                             getFormattedUser(
                                 participantJid
                             );
-
 
                         await sock.sendMessage(
                             from,
@@ -580,6 +574,12 @@ async function connectToWhatsApp() {
                             }
                         );
 
+                        // تحديث النقاط التراكمية، الفنشات، وتحديث وصف المجموعة
+                        await handleFinishAndUpdateGroup(sock, from, participantJid);
+
+                        // إنهاء الجيم وتصفير النقاط الحالية
+                        gameState.active = false;
+                        gameState.scores = {};
                     }
 
                     else {
