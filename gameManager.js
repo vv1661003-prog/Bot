@@ -3,27 +3,29 @@ const path = require('path');
 const usersPath = './registered_users.json';
 const storedImagesPath = './stored_images.json';
 const usedImagesPath = './used_images.json'; // الملف الفرعي للصور المستخدمة
+const totalScoresPath = './total_scores.json'; // ملف النقاط التراكمية
+const finishesPath = './finishes.json'; // ملف الفنشات
 
 const animeList = [
     "استا", "اينوي", "اينو", "ارمين", "ايتشيغو", "ايروين", "ايرين", "ابو", "ايلين", "اوي",
     "ازوي", "اسوي", "ايلومي", "اسوما", "اول مايت", "ايرو", "ايرن", "اوسين", "اوكي", "اولمايت",
     "ايسي", "ايتاشي", "ايساغي", "بان", "باين", "بين", "بوا", "بوروتو", "بولما", "بيسكت",
     "بروك", "باكوغو", "باران", "بايرن", "برادلي", "باولي", "بولي", "برولي", "بوف", "براون",
-    "بران", "بيكمان", "بيبو", "بيتو", "باتشيرا", "تين", "تيو", "توكيتو", "تانجيرو",
+    "بران", "بيكمان", "بيبو", "بيتو", "باتشيرا", "تن تن", "تين", "تيو", "توكيتو", "تانجيرو",
     "توجي", "توغي", "تاسك", "توشيرو", "تاشيغي", "تاشيجي", "توسين", "ترانكس", "تشوبر", "ثورز",
     "ثيو", "ثورفين", "ثورغيل", "ثوركيل", "جين", "جيلال", "جيرايا", "جولي", "جيرين", "جيمبي",
     "جينبي", "جارو", "جارا", "جينوس", "جوليا", "جون", "جيم", "جكارا", "جراي", "جاك",
     "دابي", "دورورو", "دوفلامينغو", "دين", "دوارين", "داروين", "داكي", "دوفي", "دداني", "ديو",
     "دواريمون", "دون", "رين", "ران", "راي", "روي", "ريم", "رام", "ريو", "روني",
     "رينا", "ريما", "رانبو", "زورو", "زورا", "زينو", "زينون", "زوي", "زابوزا", "زيرو",
-    "زامس", "زيتسو", "زينيتسو", "ساي", "ساني", "ساسوري", "ساسكي", "ساروتوبي", "سونغ",
+    "زامس", "زيتسو", "زينيتسو", "ساي", "ساني", "ساسوري", "ساسكي", "ساروتوبي", "سونغ", "سي سي",
     "ساكورا", "سونا", "سانجي", "شين", "شيغاراكي", "شينوبو", "شيكامارو", "شيكاداي", "شيراهوشي", "شينو",
     "شينوا", "شينرا", "شينا", "غين", "غارو", "غارا", "غيوتارو", "غيو", "غينيا", "غابيمارو",
-    "غون", "غراي", "غوتين", "فاي", "فريزا", "فوكسي", "فريرن", "فاران", "فو فو",
+    "غون", "غراي", "غوتين", "في في", "فاي", "فريزا", "فوكسي", "فريرن", "فاران", "فو فو",
     "فرانكي", "رولو", "كين", "كاي", "كروكودايل", "كوكو", "كوكوشيبو", "كرلين", "كيسامي", "كايدو",
     "كينغ", "كوين", "كيد", "كاراسو", "كورونا", "كايزر", "لاو", "ليو", "ليوبولد", "لوفي",
     "ليون", "لورينز", "لولوش", "لوكي", "لوبو", "ماي", "ماكي", "ماكيما", "ميرويم", "ميرا",
-    "ميوا", "ميو", "ميكاسا", "ماتشي", "ميرليونا", "مارسي", "موزان", "مارين", "ماين"
+    "ميوا", "ميو", "مي مي", "ميكاسا", "ماتشي", "ميرليونا", "مارسي", "موزان", "مارين", "ماين"
 ];
 
 const questionsList = [
@@ -282,6 +284,106 @@ function getAndMoveRandomImage() {
     return selectedImageObj;
 }
 
+// دالة تحديث التراكمي والوصف عند الفنش حصراً
+async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
+    try {
+        // 1. تحديث عدد التفنيشات للفائز
+        let finishes = fs.existsSync(finishesPath) ? JSON.parse(fs.readFileSync(finishesPath, 'utf8')) : {};
+        const cleanWinner = winnerJid.split('@')[0].split(':')[0];
+        
+        const winnerKeyInFinishes = Object.keys(finishes).find(k => k.split('@')[0].split(':')[0] === cleanWinner) || winnerJid;
+        finishes[winnerKeyInFinishes] = (finishes[winnerKeyInFinishes] || 0) + 1;
+        fs.writeFileSync(finishesPath, JSON.stringify(finishes, null, 2), 'utf8');
+
+        // 2. تحديث النقاط التراكمية للجميع المشاركين في الفعالية
+        let totalScores = fs.existsSync(totalScoresPath) ? JSON.parse(fs.readFileSync(totalScoresPath, 'utf8')) : {};
+        
+        for (const [userJid, pts] of Object.entries(gameState.scores)) {
+            const cleanUser = userJid.split('@')[0].split(':')[0];
+            const userKey = Object.keys(totalScores).find(k => k.split('@')[0].split(':')[0] === cleanUser) || userJid;
+            totalScores[userKey] = (totalScores[userKey] || 0) + pts;
+        }
+        fs.writeFileSync(totalScoresPath, JSON.stringify(totalScores, null, 2), 'utf8');
+
+        // 3. جلب الألقاب لمعرفة الأسماء
+        const users = fs.existsSync(usersPath) ? JSON.parse(fs.readFileSync(usersPath, 'utf8')) : {};
+        const getNick = (jid) => {
+            const clean = jid.split('@')[0].split(':')[0];
+            const match = Object.keys(users).find(k => k.split('@')[0].split(':')[0] === clean);
+            return match ? users[match] : `@${clean}`;
+        };
+
+        // 4. ترتيب النقاط التراكمية للأوائل الثلاثة
+        const sortedScores = Object.entries(totalScores)
+            .sort((a, b) => b[1] - a[1]);
+
+        const top1 = sortedScores[0] ? { name: getNick(sortedScores[0][0]), pts: sortedScores[0][1] } : { name: 'لا يوجد', pts: 0 };
+        const top2 = sortedScores[1] ? { name: getNick(sortedScores[1][0]), pts: sortedScores[1][1] } : { name: 'لا يوجد', pts: 0 };
+        const top3 = sortedScores[2] ? { name: getNick(sortedScores[2][0]), pts: sortedScores[2][1] } : { name: 'لا يوجد', pts: 0 };
+
+        // 5. ترتيب أعلى مفنش
+        const sortedFinishes = Object.entries(finishes)
+            .sort((a, b) => b[1] - a[1]);
+        const topFinisher = sortedFinishes[0] ? { name: getNick(sortedFinishes[0][0]), count: sortedFinishes[0][1] } : { name: 'لا يوجد', count: 0 };
+
+        // 6. صياغة النص الجديد للوصف
+        const newDescription = `*╎ᏚᏢᎪᏒᎿᎪ ◟🔆◞ ╎*
+
+*˼‏⚖️˹ •⪼⏌ ⇂ فـكـرة الـجـروب ⇃⎾*
+
+*❏╎بكل بساطة بيساعدك تطور مستواك وتتونس .*
+
+~*❖━━━┄⋄┄━━━╃ 𓆩🔆𓆪 ╄━━━┄⋄┄━━━❖*~
+
+*˼‏⚖️˹ •⪼⏌ ⇂ الـقـوانـيـن ⇃⎾*
+
+*❏╎لا تسب وخلك محترم تُحترم.*
+*❏╎لا تسبام نهائيا.*
+*❏╎هبد اوامر = طرد مؤقت*
+*❏╎يتم تحسين البوت بين كل فتره وفتره واذا كانت هناك نصايح تفضل وقولها.*
+*❏╎للتعرف على اوامر البوت ارسل .اوامر*
+
+~*❖━━━┄⋄┄━━━╃ 𓆩🔆𓆪 ╄━━━┄⋄┄━━━❖*~
+
+*˼‏🪽˹ •⪼⏌ ⇂ الــتصـنـيـف ⇃⎾*
+
+*❏ الــنـقـاط.*
+
+*˼‏الاول˹╎${top1.name}*
+*النقاط:${top1.pts}*
+
+
+*˼‏الثاني˹╎${top2.name}*
+*النقاط:${top2.pts}*
+
+*˼‏الثالث˹╎${top3.name}*
+*النقاط:${top3.pts}*
+
+*❏اقـوى مـفـنـش :${topFinisher.name}*
+*الفنشات:${topFinisher.count}*
+
+
+*عشان تعرف نقاطك وفنشاتك اكتب .رانكي*
+~*❖━━━┄⋄┄━━━╃ 𓆩🔆𓆪 ╄━━━┄⋄┄━━━❖*~
+
+*˼‏🪽˹ •⪼⏌ ⇂ الــرابــط ⇃⎾*
+
+*「 https://chat.whatsapp.com/BZVgL9MZwroGBM34haO2DD?s=cl&p=a&mlu=4&amv=0 」*
+
+~*❖━━━┄⋄┄━━━╃ 𓆩🔆𓆪 ╄━━━┄⋄┄━━━❖*~
+
+*❏↵الـمـسـؤول╎دافـنـشـي 🔆*
+
+*╎ᏚᏢᎪᏒᎿᎪ ◟🔆◞ ╎*`;
+
+        // 7. تحديث وصف المجموعة
+        await sock.groupUpdateDescription(chatId, newDescription);
+
+    } catch (error) {
+        console.error('خطأ أثناء تحديث النقاط والتصنيف في وصف المجموعة:', error);
+    }
+}
+
 async function nextRound(sock) {
     if (!gameState.active || gameState.paused) return;
 
@@ -433,6 +535,7 @@ module.exports = {
     getFormattedUser,
     handleCountdownSpam,
     checkAnswer,
+    handleFinishAndUpdateGroup,
     nextRound,
     advanceType,
     defaultTypes
