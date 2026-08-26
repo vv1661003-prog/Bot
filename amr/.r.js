@@ -1,62 +1,40 @@
-const fs = require('fs');
-const storedImagesPath = './stored_images.json';
-const usedImagesPath = './used_images.json'; // الملف الفرعي للصور المستخدمة
+const { GameImage } = require('../gameManager');
 
 module.exports = {
     name: '.r',
     async execute({ sock, msg, from, args, isOwner, sender }) {
-        // إذا لم يكن المالك يتم تجاهل الرسالة والسكوت تماماً
         if (!isOwner) return;
 
-        // دمج الكلمات المدخلة بعد الأمر
         const inputName = args.join(' ').trim();
         if (!inputName) return;
 
         try {
-            // تفكيك الأسماء إذا كانت مفصولة بـ /
             const targets = inputName.split('/').map(n => n.trim().toLowerCase()).filter(Boolean);
 
-            let deleted = false;
+            // البحث عن الصور التي تحتوي على الأسماء المطابقة لحذفها
+            const allImages = await GameImage.find({});
+            let deletedCount = 0;
 
-            // دالة مساعدة لفلترة وحذف الصورة من أي ملف
-            const removeImageFromFile = (filePath) => {
-                if (!fs.existsSync(filePath)) return false;
-                
-                let images = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                const initialCount = images.length;
+            for (const img of allImages) {
+                if (!img.names || !Array.isArray(img.names)) continue;
 
-                images = images.filter(img => {
-                    if (!img.names || !Array.isArray(img.names)) return true;
-
-                    const hasMatch = img.names.some(name => {
-                        const cleanName = name.trim().toLowerCase();
-                        return targets.some(target => cleanName === target || cleanName.includes(target));
-                    });
-
-                    return !hasMatch;
+                const hasMatch = img.names.some(name => {
+                    const cleanName = name.trim().toLowerCase();
+                    return targets.some(target => cleanName === target || cleanName.includes(target));
                 });
 
-                if (images.length < initialCount) {
-                    fs.writeFileSync(filePath, JSON.stringify(images, null, 2), 'utf8');
-                    return true;
+                if (hasMatch) {
+                    await GameImage.deleteOne({ _id: img._id });
+                    deletedCount++;
                 }
-                return false;
-            };
+            }
 
-            // الحذف من الملف الأساسي
-            const deletedFromStored = removeImageFromFile(storedImagesPath);
-            // الحذف من الملف الفرعي (المستخدمة)
-            const deletedFromUsed = removeImageFromFile(usedImagesPath);
-
-            deleted = deletedFromStored || deletedFromUsed;
-
-            // إذا تم الحذف من أي من الملفين
-            if (deleted) {
+            if (deletedCount > 0) {
                 await sock.sendMessage(from, { text: 'تم الحذف' }, { quoted: msg });
             }
 
         } catch (error) {
-            console.error('خطأ أثناء حذف الصورة:', error);
+            console.error('خطأ أثناء حذف الصورة من قاعدة البيانات:', error);
         }
     }
 };

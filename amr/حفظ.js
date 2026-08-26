@@ -1,4 +1,4 @@
-const fs = require('fs');
+const { GameImage } = require('../gameManager');
 
 module.exports = {
     name: 'حفظ',
@@ -10,8 +10,8 @@ module.exports = {
         const rawInput = args.join(' ');
 
         if (!rawInput) {
-            return await sock.sendMessage(from, { 
-                text: '⚠️ يرجى كتابة اسم الشخصية (أو الأسماء تفصل بينها /) بعد الأمر!\nمثال: `.حفظ ميدوريا/ايزوكو/ديكو`' 
+            return await sock.sendMessage(from, {
+                text: '⚠️ يرجى كتابة اسم الشخصية (أو الأسماء تفصل بينها /) بعد الأمر!\nمثال: `.حفظ ميدوريا/ايزوكو/ديكو`'
             }, { quoted: msg });
         }
 
@@ -34,19 +34,25 @@ module.exports = {
             message: context.quotedMessage
         } : msg;
 
-        const jsonPath = './stored_images.json';
-        let storedImages = fs.existsSync(jsonPath) ? JSON.parse(fs.readFileSync(jsonPath, 'utf8')) : [];
+        try {
+            // توليد معرف فريد للصورة بناءً على وقت حفظها ورقم الرسالة
+            const imageId = `${Date.now()}_${targetMessage.key.id || Math.random().toString(36).substring(7)}`;
 
-        storedImages.push({
-            names: namesArray,
-            messageObject: targetMessage
-        });
+            // إنشاء حفظ جديد للصورة في MongoDB Atlas
+            await GameImage.create({
+                imageId: imageId,
+                names: namesArray,
+                messageObject: targetMessage,
+                isUsed: false
+            });
 
-        fs.writeFileSync(jsonPath, JSON.stringify(storedImages, null, 2));
-
-        const namesText = namesArray.join(' - ');
-        await sock.sendMessage(from, { 
-            text: `✅ تم حفظ الصورة بنجاح!\nالأسماء المقبولة للإجابة: (*${namesText}*)` 
-        }, { quoted: msg });
+            const namesText = namesArray.join(' - ');
+            await sock.sendMessage(from, {
+                text: `✅ تم حفظ الصورة بنجاح في قاعدة البيانات!\nالأسماء المقبولة للإجابة: (*${namesText}*)`
+            }, { quoted: msg });
+        } catch (error) {
+            console.error('خطأ أثناء حفظ الصورة في MongoDB:', error);
+            await sock.sendMessage(from, { text: '❌ حدث خطأ أثناء حفظ الصورة في قاعدة البيانات.' }, { quoted: msg });
+        }
     }
 };

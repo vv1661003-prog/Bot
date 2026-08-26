@@ -1,10 +1,40 @@
-const fs = require('fs');
-const path = require('path');
-const usersPath = './registered_users.json';
-const storedImagesPath = './stored_images.json';
-const usedImagesPath = './used_images.json'; // الملف الفرعي للصور المستخدمة
-const totalScoresPath = './total_scores.json'; // ملف النقاط التراكمية
-const finishesPath = './finishes.json'; // ملف الفنشات
+const mongoose = require('mongoose');
+
+// ==========================================
+// 1. تعريف مخططات MongoDB (Mongoose Schemas)
+// ==========================================
+
+// مخطط المستخدمين المسجلين (الألقاب)
+const RegisteredUser = mongoose.models.RegisteredUser || mongoose.model('RegisteredUser', new mongoose.Schema({
+    jid: { type: String, required: true, unique: true },
+    nickname: { type: String, required: true }
+}));
+
+// مخطط النقاط التراكمية
+const TotalScore = mongoose.models.TotalScore || mongoose.model('TotalScore', new mongoose.Schema({
+    jid: { type: String, required: true, unique: true },
+    score: { type: Number, default: 0 }
+}));
+
+// مخطط الفنشات
+const Finish = mongoose.models.Finish || mongoose.model('Finish', new mongoose.Schema({
+    jid: { type: String, required: true, unique: true },
+    count: { type: Number, default: 0 }
+}));
+
+// مخطط الصور (المخزنة والمستخدمة)
+const ImageSchema = new mongoose.Schema({
+    imageId: { type: String, required: true, unique: true },
+    names: [String],
+    messageObject: Object,
+    isUsed: { type: Boolean, default: false } // تمييز الصور المستخدمة عن غير المستخدمة
+});
+const GameImage = mongoose.models.GameImage || mongoose.model('GameImage', ImageSchema);
+
+
+// ==========================================
+// 2. القوائم والبيانات الثابتة
+// ==========================================
 
 const animeList = [
     "استا", "اينوي", "اينو", "ارمين", "ايتشيغو", "ايروين", "ايرين", "ابو", "ايلين", "اوي",
@@ -163,18 +193,25 @@ function shuffleString(str) {
     return a.join(' ');
 }
 
-function getFormattedUser(rawJid) {
-    const users = fs.existsSync(usersPath) ? JSON.parse(fs.readFileSync(usersPath, 'utf8')) : {};
-    const cleanJid = rawJid.split('@')[0].split(':')[0];
+// ==========================================
+// 3. الدوال المعدلة لاستخدام MongoDB
+// ==========================================
 
-    const matchedKey = Object.keys(users).find(key => {
-        const cleanKey = key.split('@')[0].split(':')[0];
-        return key === rawJid || cleanKey === cleanJid;
-    });
+async function getFormattedUser(rawJid) {
+    try {
+        const cleanJid = rawJid.split('@')[0].split(':')[0];
+        const userDoc = await RegisteredUser.findOne({
+            $or: [{ jid: rawJid }, { jid: new RegExp(`^${cleanJid}`) }]
+        });
 
-    if (matchedKey && users[matchedKey]) {
-        return { text: users[matchedKey], isMention: false };
-    } else {
+        if (userDoc && userDoc.nickname) {
+            return { text: userDoc.nickname, isMention: false };
+        } else {
+            return { text: `@${cleanJid}`, isMention: true, jid: rawJid };
+        }
+    } catch (err) {
+        console.error("خطأ جلب بيانات المستخدم:", err);
+        const cleanJid = rawJid.split('@')[0].split(':')[0];
         return { text: `@${cleanJid}`, isMention: true, jid: rawJid };
     }
 }
@@ -255,76 +292,78 @@ function checkAnswer(userText, validAnswers, currentType, userId) {
     }
 }
 
-// دالة اختيار الصورة مع النقل المباشر للملف الفرعي ومنع التكرار
-function getAndMoveRandomImage() {
-    let stored = fs.existsSync(storedImagesPath) ? JSON.parse(fs.readFileSync(storedImagesPath, 'utf8')) : [];
-    let used = fs.existsSync(usedImagesPath) ? JSON.parse(fs.readFileSync(usedImagesPath, 'utf8')) : [];
+// دالة اختيار صورة عشوائية ومزامنتها مع MongoDB
+async function getAndMoveRandomImage() {
+    try {
+        let availableCount = await GameImage.countDocuments({ isUsed: false });
 
-    // إذا أصبحت الصور الأساسية فارغة، نقوم بنقل كل الصور الفرعية إلى الأساسية مجدداً
-    if (stored.length === 0 && used.length > 0) {
-        stored = [...used];
-        used = [];
-        fs.writeFileSync(storedImagesPath, JSON.stringify(stored, null, 2));
-        fs.writeFileSync(usedImagesPath, JSON.stringify([], null, 2));
+        // إذا انتهت الصور غير المستخدمة، نُرجع كل الصور كـ غير مستخدمة لإعادة الدورة
+        if (availableCount === 0) {
+            await GameImage.updateMany({}, { $set: { isUsed: false } });
+            availableCount = await GameImage.countDocuments({ isUsed: false });
+        }
+
+        if (availableCount === 0) return null;
+
+        const randomIndex = Math.floor(Math.random() * availableCount);
+        const selectedImage = await GameImage.findOne({ isUsed: false }).skip(randomIndex);
+
+        if (selectedImage) {
+            selectedImage.isUsed = true;
+            await selectedImage.save();
+        }
+
+        return selectedImage;
+    } catch (err) {
+        console.error("خطأ في جلب الصور من MongoDB:", err);
+        return null;
     }
-
-    if (stored.length === 0) return null;
-
-    // اختيار صورة عشوائية
-    const randomIndex = Math.floor(Math.random() * stored.length);
-    const selectedImageObj = stored.splice(randomIndex, 1)[0];
-
-    // إضافة الصورة المختارة إلى ملف الصور المستخدمة
-    used.push(selectedImageObj);
-
-    // حفظ التحديثات في الملفين
-    fs.writeFileSync(storedImagesPath, JSON.stringify(stored, null, 2));
-    fs.writeFileSync(usedImagesPath, JSON.stringify(used, null, 2));
-
-    return selectedImageObj;
 }
 
-// دالة تحديث التراكمي والوصف عند الفنش حصراً
+// دالة تحديث النقاط التراكمية، التفنيشات والوصف في MongoDB
 async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
     try {
-        // 1. تحديث عدد التفنيشات للفائز
-        let finishes = fs.existsSync(finishesPath) ? JSON.parse(fs.readFileSync(finishesPath, 'utf8')) : {};
         const cleanWinner = winnerJid.split('@')[0].split(':')[0];
-        
-        const winnerKeyInFinishes = Object.keys(finishes).find(k => k.split('@')[0].split(':')[0] === cleanWinner) || winnerJid;
-        finishes[winnerKeyInFinishes] = (finishes[winnerKeyInFinishes] || 0) + 1;
-        fs.writeFileSync(finishesPath, JSON.stringify(finishes, null, 2), 'utf8');
 
-        // 2. تحديث النقاط التراكمية للجميع المشاركين في الفعالية
-        let totalScores = fs.existsSync(totalScoresPath) ? JSON.parse(fs.readFileSync(totalScoresPath, 'utf8')) : {};
-        
+        // 1. تحديث التفنيشات للفائز
+        await Finish.findOneAndUpdate(
+            { jid: new RegExp(`^${cleanWinner}`) },
+            { $inc: { count: 1 }, $setOnInsert: { jid: winnerJid } },
+            { upsert: true, new: true }
+        );
+
+        // 2. تحديث النقاط التراكمية للجميع
         for (const [userJid, pts] of Object.entries(gameState.scores)) {
             const cleanUser = userJid.split('@')[0].split(':')[0];
-            const userKey = Object.keys(totalScores).find(k => k.split('@')[0].split(':')[0] === cleanUser) || userJid;
-            totalScores[userKey] = (totalScores[userKey] || 0) + pts;
+            await TotalScore.findOneAndUpdate(
+                { jid: new RegExp(`^${cleanUser}`) },
+                { $inc: { score: pts }, $setOnInsert: { jid: userJid } },
+                { upsert: true, new: true }
+            );
         }
-        fs.writeFileSync(totalScoresPath, JSON.stringify(totalScores, null, 2), 'utf8');
 
-        // 3. جلب الألقاب لمعرفة الأسماء
-        const users = fs.existsSync(usersPath) ? JSON.parse(fs.readFileSync(usersPath, 'utf8')) : {};
+        // 3. جلب الألقاب المحدثة
+        const allUsers = await RegisteredUser.find({});
+        const userMap = {};
+        allUsers.forEach(u => {
+            const clean = u.jid.split('@')[0].split(':')[0];
+            userMap[clean] = u.nickname;
+        });
+
         const getNick = (jid) => {
             const clean = jid.split('@')[0].split(':')[0];
-            const match = Object.keys(users).find(k => k.split('@')[0].split(':')[0] === clean);
-            return match ? users[match] : `@${clean}`;
+            return userMap[clean] || `@${clean}`;
         };
 
-        // 4. ترتيب النقاط التراكمية للأوائل الثلاثة
-        const sortedScores = Object.entries(totalScores)
-            .sort((a, b) => b[1] - a[1]);
-
-        const top1 = sortedScores[0] ? { name: getNick(sortedScores[0][0]), pts: sortedScores[0][1] } : { name: 'لا يوجد', pts: 0 };
-        const top2 = sortedScores[1] ? { name: getNick(sortedScores[1][0]), pts: sortedScores[1][1] } : { name: 'لا يوجد', pts: 0 };
-        const top3 = sortedScores[2] ? { name: getNick(sortedScores[2][0]), pts: sortedScores[2][1] } : { name: 'لا يوجد', pts: 0 };
+        // 4. ترتيب النقاط التراكمية للأوائل
+        const sortedScores = await TotalScore.find({}).sort({ score: -1 }).limit(3);
+        const top1 = sortedScores[0] ? { name: getNick(sortedScores[0].jid), pts: sortedScores[0].score } : { name: 'لا يوجد', pts: 0 };
+        const top2 = sortedScores[1] ? { name: getNick(sortedScores[1].jid), pts: sortedScores[1].score } : { name: 'لا يوجد', pts: 0 };
+        const top3 = sortedScores[2] ? { name: getNick(sortedScores[2].jid), pts: sortedScores[2].score } : { name: 'لا يوجد', pts: 0 };
 
         // 5. ترتيب أعلى مفنش
-        const sortedFinishes = Object.entries(finishes)
-            .sort((a, b) => b[1] - a[1]);
-        const topFinisher = sortedFinishes[0] ? { name: getNick(sortedFinishes[0][0]), count: sortedFinishes[0][1] } : { name: 'لا يوجد', count: 0 };
+        const topFinisherDoc = await Finish.findOne({}).sort({ count: -1 });
+        const topFinisher = topFinisherDoc ? { name: getNick(topFinisherDoc.jid), count: topFinisherDoc.count } : { name: 'لا يوجد', count: 0 };
 
         // 6. صياغة النص الجديد للوصف
         const newDescription = `*╎ᏚᏢᎪᏒᎿᎪ ◟🔆◞ ╎*
@@ -409,7 +448,7 @@ async function nextRound(sock) {
         await sleep(1000);
 
         if (currentType === 'صور') {
-            const selectedImageObj = getAndMoveRandomImage();
+            const selectedImageObj = await getAndMoveRandomImage();
 
             if (!selectedImageObj) {
                 advanceType();
@@ -538,5 +577,10 @@ module.exports = {
     handleFinishAndUpdateGroup,
     nextRound,
     advanceType,
-    defaultTypes
+    defaultTypes,
+    // تصدير النماذج لتعمل في مجلد amr والأوامر الخارجية
+    RegisteredUser,
+    TotalScore,
+    Finish,
+    GameImage
 };
