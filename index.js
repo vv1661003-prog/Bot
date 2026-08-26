@@ -105,18 +105,98 @@ app.listen(PORT, () => {
 
 
 // ==============================
-// WhatsApp Bot
+// WhatsApp Bot & MongoDB Setup
 // ==============================
 
 const {
     default: makeWASocket,
-    useMultiFileAuthState,
     DisconnectReason
 } = require('@whiskeysockets/baileys');
 
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
+const mongoose = require('mongoose');
+
+// رابط اتصال MongoDB Atlas الخاص بك
+const MONGO_URI = 'mongodb+srv://vv1661003_db_user:yj089KXrnbXbKjPB@cluster0.sqcjwcp.mongodb.net/?appName=Cluster0';
+
+// إنشاء Schema لحفظ الجلسة داخل MongoDB
+const SessionSchema = new mongoose.Schema({
+    _id: String,
+    data: String
+});
+const SessionModel = mongoose.model('Session', SessionSchema);
+
+// مخصص لإدارة جلسة Baileys على MongoDB
+async function useMongoAuthState() {
+    await mongoose.connect(MONGO_URI);
+    console.log('⚡ متصل بـ MongoDB بنجاح!');
+
+    const writeData = async (data, id) => {
+        const information = JSON.stringify(data, (key, value) => {
+            if (value?.type === 'Buffer') {
+                return { type: 'Buffer', data: Array.from(value.data || []) };
+            }
+            return value;
+        });
+        await SessionModel.replaceOne({ _id: id }, { _id: id, data: information }, { upsert: true });
+    };
+
+    const readData = async (id) => {
+        try {
+            const result = await SessionModel.findOne({ _id: id });
+            if (!result) return null;
+            return JSON.parse(result.data, (key, value) => {
+                if (value?.type === 'Buffer') {
+                    return Buffer.from(value.data);
+                }
+                return value;
+            });
+        } catch {
+            return null;
+        }
+    };
+
+    const removeData = async (id) => {
+        await SessionModel.deleteOne({ _id: id });
+    };
+
+    const creds = (await readData('creds')) || require('@whiskeysockets/baileys').initAuthCreds();
+
+    return {
+        state: {
+            creds,
+            keys: {
+                get: async (type, ids) => {
+                    const data = {};
+                    await Promise.all(
+                        ids.map(async (id) => {
+                            let value = await readData(`${type}-${id}`);
+                            if (type === 'app-state-sync-key' && value) {
+                                value = require('@whiskeysockets/baileys').proto.Message.AppStateSyncKeyData.fromObject(value);
+                            }
+                            data[id] = value;
+                        })
+                    );
+                    return data;
+                },
+                set: async (data) => {
+                    const tasks = [];
+                    for (const category in data) {
+                        for (const id in data[category]) {
+                            const value = data[category][id];
+                            const key = `${category}-${id}`;
+                            tasks.push(value ? writeData(value, key) : removeData(key));
+                        }
+                    }
+                    await Promise.all(tasks);
+                }
+            }
+        },
+        saveCreds: () => writeData(creds, 'creds')
+    };
+}
 
 const {
     gameState,
@@ -145,8 +225,7 @@ let isBotOff = false;
 
 async function connectToWhatsApp() {
 
-    const { state, saveCreds } =
-        await useMultiFileAuthState('auth_info');
+    const { state, saveCreds } = await useMongoAuthState();
 
     const sock = makeWASocket({
         auth: state,
@@ -224,7 +303,7 @@ async function connectToWhatsApp() {
             } else {
 
                 console.log(
-                    '❌ تم تسجيل الخروج. يرجى حذف مجلد auth_info وإعادة التشغيل.'
+                    '❌ تم تسجيل الخروج. يرجى إعادة مسح الـ QR.'
                 );
             }
         }
@@ -239,7 +318,7 @@ async function connectToWhatsApp() {
             currentQR = null;
 
             console.log('\n====================================');
-            console.log('✅ تم الاتصال بالواتساب بنجاح! البوت يعمل الآن ⚡');
+            console.log('✅ تم الاتصال بالواتساب بنجاح ومحفوظ في MongoDB! البوت يعمل الآن ⚡');
             console.log('====================================\n');
         }
 
