@@ -583,28 +583,17 @@ async function connectToWhatsApp() {
 
 
                     const mentions = [];
+                    const scoreLines = [];
 
+                    for (const [jid, pts] of Object.entries(gameState.scores)) {
+                        const userInfo = await getFormattedUser(jid);
 
-                    const scoreLines =
-                        Object.entries(
-                            gameState.scores
-                        ).map(([jid, pts]) => {
+                        if (userInfo.isMention) {
+                            mentions.push(userInfo.jid);
+                        }
 
-                            const userInfo =
-                                getFormattedUser(jid);
-
-
-                            if (userInfo.isMention) {
-
-                                mentions.push(
-                                    userInfo.jid
-                                );
-                            }
-
-
-                            return `${userInfo.text} ${pts}`;
-
-                        });
+                        scoreLines.push(`${userInfo.text} ${pts}`);
+                    }
 
 
                     await sock.sendMessage(
@@ -634,7 +623,7 @@ async function connectToWhatsApp() {
                         await sleep(500);
 
                         const userInfo =
-                            getFormattedUser(
+                            await getFormattedUser(
                                 participantJid
                             );
 
