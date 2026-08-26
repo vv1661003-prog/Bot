@@ -4,30 +4,26 @@ const mongoose = require('mongoose');
 // 1. تعريف مخططات MongoDB (Mongoose Schemas)
 // ==========================================
 
-// مخطط المستخدمين المسجلين (الألقاب)
 const RegisteredUser = mongoose.models.RegisteredUser || mongoose.model('RegisteredUser', new mongoose.Schema({
     jid: { type: String, required: true, unique: true },
     nickname: { type: String, required: true }
 }));
 
-// مخطط النقاط التراكمية
 const TotalScore = mongoose.models.TotalScore || mongoose.model('TotalScore', new mongoose.Schema({
     jid: { type: String, required: true, unique: true },
     score: { type: Number, default: 0 }
 }));
 
-// مخطط الفنشات
 const Finish = mongoose.models.Finish || mongoose.model('Finish', new mongoose.Schema({
     jid: { type: String, required: true, unique: true },
     count: { type: Number, default: 0 }
 }));
 
-// مخطط الصور (المخزنة والمستخدمة)
 const ImageSchema = new mongoose.Schema({
     imageId: { type: String, required: true, unique: true },
     names: [String],
     messageObject: Object,
-    isUsed: { type: Boolean, default: false } // تمييز الصور المستخدمة عن غير المستخدمة
+    isUsed: { type: Boolean, default: false }
 });
 const GameImage = mongoose.models.GameImage || mongoose.model('GameImage', ImageSchema);
 
@@ -130,7 +126,7 @@ const questionsList = [
     { q: "قائد المعجزات؟", a: ["اكاشي"] },
     { q: "ملك الوحوش؟", a: ["كايدو"] },
     { q: "كلب الحمم؟", a: ["اكاينو"] },
-    { q: "الرقم ثنين؟", a: ["هوكس"] },
+    { q: "القم ثنين؟", a: ["هوكس"] },
     { q: "اقوى شامان؟", a: ["غوجو"] },
     { q: "اقوى مستخدم نين؟", a: ["نيترو", "نيتيرو"] },
     { q: "ملك النمل؟", a: ["ميرويم"] },
@@ -143,7 +139,7 @@ const questionsList = [
     { q: "نائب لاو؟", a: ["بيبو"] },
     { q: "ابن دراغون؟", a: ["لوفي"] },
     { q: "عين الصقر؟", a: ["ميهوك"] },
-    { q: "حبيبة كانيكي؟", a: ["توكا"] },
+    { q: "ح حبيبة كانيكي؟", a: ["توكا"] },
     { q: "شينيغامي لايت؟", a: ["ريوك"] },
     { q: "تلميذ غاي؟", a: ["لي", "روك"] },
     { q: "ابنة شانكس؟", a: ["اوتا"] },
@@ -152,7 +148,7 @@ const questionsList = [
     { q: "طائر تشين؟", a: ["اوكي"] },
     { q: "كلب ماكيما؟", a: ["دينجي"] },
     { q: "اخ شينرا؟", a: ["شو"] },
-    { q: "السياف الاسود؟", a: ["غاتس"] }
+    { q: "السياف الاسود؟", a: ["غاتس"]
 ];
 
 let pools = {
@@ -194,14 +190,22 @@ function shuffleString(str) {
 }
 
 // ==========================================
-// 3. الدوال المعدلة لاستخدام MongoDB
+// 3. الدوال المعدلة (تصحيح الـ undefined ومشكلة الصور)
 // ==========================================
 
 async function getFormattedUser(rawJid) {
+    if (!rawJid) {
+        return { text: "@مجهول", isMention: true, jid: "" };
+    }
     try {
         const cleanJid = rawJid.split('@')[0].split(':')[0];
+        
+        // البحث عن المستخدم بالطريقة الدقيقة أو باستخدام التعبير المنتظم (Regex)
         const userDoc = await RegisteredUser.findOne({
-            $or: [{ jid: rawJid }, { jid: new RegExp(`^${cleanJid}`) }]
+            $or: [
+                { jid: rawJid },
+                { jid: { $regex: `^${cleanJid}` } }
+            ]
         });
 
         if (userDoc && userDoc.nickname) {
@@ -297,7 +301,6 @@ async function getAndMoveRandomImage() {
     try {
         let availableCount = await GameImage.countDocuments({ isUsed: false });
 
-        // إذا انتهت الصور غير المستخدمة، نُرجع كل الصور كـ غير مستخدمة لإعادة الدورة
         if (availableCount === 0) {
             await GameImage.updateMany({}, { $set: { isUsed: false } });
             availableCount = await GameImage.countDocuments({ isUsed: false });
@@ -325,14 +328,12 @@ async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
     try {
         const cleanWinner = winnerJid.split('@')[0].split(':')[0];
 
-        // 1. تحديث التفنيشات للفائز
         await Finish.findOneAndUpdate(
             { jid: new RegExp(`^${cleanWinner}`) },
             { $inc: { count: 1 }, $setOnInsert: { jid: winnerJid } },
             { upsert: true, new: true }
         );
 
-        // 2. تحديث النقاط التراكمية للجميع
         for (const [userJid, pts] of Object.entries(gameState.scores)) {
             const cleanUser = userJid.split('@')[0].split(':')[0];
             await TotalScore.findOneAndUpdate(
@@ -342,7 +343,6 @@ async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
             );
         }
 
-        // 3. جلب الألقاب المحدثة
         const allUsers = await RegisteredUser.find({});
         const userMap = {};
         allUsers.forEach(u => {
@@ -355,17 +355,14 @@ async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
             return userMap[clean] || `@${clean}`;
         };
 
-        // 4. ترتيب النقاط التراكمية للأوائل
         const sortedScores = await TotalScore.find({}).sort({ score: -1 }).limit(3);
         const top1 = sortedScores[0] ? { name: getNick(sortedScores[0].jid), pts: sortedScores[0].score } : { name: 'لا يوجد', pts: 0 };
         const top2 = sortedScores[1] ? { name: getNick(sortedScores[1].jid), pts: sortedScores[1].score } : { name: 'لا يوجد', pts: 0 };
         const top3 = sortedScores[2] ? { name: getNick(sortedScores[2].jid), pts: sortedScores[2].score } : { name: 'لا يوجد', pts: 0 };
 
-        // 5. ترتيب أعلى مفنش
         const topFinisherDoc = await Finish.findOne({}).sort({ count: -1 });
         const topFinisher = topFinisherDoc ? { name: getNick(topFinisherDoc.jid), count: topFinisherDoc.count } : { name: 'لا يوجد', count: 0 };
 
-        // 6. صياغة النص الجديد للوصف
         const newDescription = `*╎ᏚᏢᎪᏒᎿᎪ ◟🔆◞ ╎*
 
 *˼‏⚖️˹ •⪼⏌ ⇂ فـكـرة الـجـروب ⇃⎾*
@@ -415,7 +412,6 @@ async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
 
 *╎ᏚᏢᎪᏒᎿᎪ ◟🔆◞ ╎*`;
 
-        // 7. تحديث وصف المجموعة
         await sock.groupUpdateDescription(chatId, newDescription);
 
     } catch (error) {
@@ -450,17 +446,24 @@ async function nextRound(sock) {
         if (currentType === 'صور') {
             const selectedImageObj = await getAndMoveRandomImage();
 
-            if (!selectedImageObj) {
+            if (!selectedImageObj || !selectedImageObj.messageObject) {
                 advanceType();
                 return nextRound(sock);
             }
 
             gameState.validAnswers = [...selectedImageObj.names];
 
-            await sock.sendMessage(gameState.chatId, {
-                forward: selectedImageObj.messageObject,
-                caption: `*صور ${gameState.typeRound}*`
-            });
+            // تصحيح إرسال الصورة المخزنة في MongoDB بالتعامل الآمن مع رسالة الوسائط
+            try {
+                await sock.sendMessage(gameState.chatId, {
+                    forward: selectedImageObj.messageObject,
+                    caption: `*صور ${gameState.typeRound}*`
+                });
+            } catch (imgErr) {
+                console.error("خطأ في إعادة توجيه الصورة المحفوظة، جاري تخطي الجولة:", imgErr);
+                advanceType();
+                return nextRound(sock);
+            }
 
         } else if (currentType === 'اسئله') {
             if (pools.questions.length === 0) {
@@ -578,7 +581,6 @@ module.exports = {
     nextRound,
     advanceType,
     defaultTypes,
-    // تصدير النماذج لتعمل في مجلد amr والأوامر الخارجية
     RegisteredUser,
     TotalScore,
     Finish,
