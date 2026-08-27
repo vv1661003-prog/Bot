@@ -108,7 +108,7 @@ const questionsList = [
     { q: "نائب لاو؟", a: ["بيبو"] },
     { q: "ابن دراغون؟", a: ["لوفي"] },
     { q: "عين الصقر؟", a: ["ميهوك"] },
-    { q: "ح حبيبة كانيكي؟", a: ["توكا"] },
+    { q: "حبيبة كانيكي؟", a: ["توكا"] },
     { q: "شينيغامي لايت؟", a: ["ريوك"] },
     { q: "تلميذ غاي؟", a: ["لي", "روك"] },
     { q: "ابنة شانكس؟", a: ["اوتا"] },
@@ -189,23 +189,25 @@ const writeJson = (filename, data) => {
 };
 
 // ==========================================
-// الدوال المحدثة للعمل محلياً
+// الدوال المحدثة والمحصنة بالكامل
 // ==========================================
 
 async function getFormattedUser(rawJid) {
     try {
-        const cleanJid = rawJid.split('@')[0].split(':')[0];
+        const cleanJid = rawJid ? rawJid.split('@')[0].split(':')[0] : '';
         const users = readJson('registered_users.json');
-        const userDoc = users.find(u => u.jid === rawJid || u.jid.startsWith(cleanJid));
-
-        if (userDoc && userDoc.nickname) {
-            return { text: userDoc.nickname, isMention: false };
-        } else {
-            return { text: `@${cleanJid}`, isMention: true, jid: rawJid };
+        
+        if (Array.isArray(users) && users.length > 0) {
+            const userDoc = users.find(u => u && (u.jid === rawJid || (u.jid && u.jid.startsWith(cleanJid))));
+            if (userDoc && userDoc.nickname) {
+                return { text: userDoc.nickname, isMention: false };
+            }
         }
+        
+        return { text: `@${cleanJid}`, isMention: true, jid: rawJid };
     } catch (err) {
         console.error("خطأ جلب بيانات المستخدم:", err);
-        const cleanJid = rawJid.split('@')[0].split(':')[0];
+        const cleanJid = rawJid ? rawJid.split('@')[0].split(':')[0] : '';
         return { text: `@${cleanJid}`, isMention: true, jid: rawJid };
     }
 }
@@ -320,9 +322,9 @@ async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
     try {
         const cleanWinner = winnerJid.split('@')[0].split(':')[0];
 
-        // 1. تحديث الفنشات باستخدام مطابقة الـ JID النظيفة
         let finishes = readJson('finishes.json');
         let finishDoc = finishes.find(f => {
+            if (!f || !f.jid) return false;
             const cleanF = f.jid.split('@')[0].split(':')[0];
             return cleanF === cleanWinner;
         });
@@ -335,11 +337,11 @@ async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
         }
         writeJson('finishes.json', finishes);
 
-        // 2. تحديث النقاط
         let totalScores = readJson('total_scores.json');
         for (const [userJid, pts] of Object.entries(gameState.scores)) {
             const cleanUser = userJid.split('@')[0].split(':')[0];
             let scoreDoc = totalScores.find(s => {
+                if (!s || !s.jid) return false;
                 const cleanS = s.jid.split('@')[0].split(':')[0];
                 return cleanS === cleanUser;
             });
@@ -352,26 +354,28 @@ async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
         }
         writeJson('total_scores.json', totalScores);
 
-        // 3. جلب الألقاب والأسماء من registered_users.json
         const allUsers = readJson('registered_users.json');
         const userMap = {};
         allUsers.forEach(u => {
-            const clean = u.jid.split('@')[0].split(':')[0];
-            userMap[clean] = u.nickname;
+            if (u && u.jid) {
+                const clean = u.jid.split('@')[0].split(':')[0];
+                userMap[clean] = u.nickname;
+            }
         });
 
         const getNick = (jid) => {
+            if (!jid) return '@unknown';
             const clean = jid.split('@')[0].split(':')[0];
             return userMap[clean] || `@${clean}`;
         };
 
-        totalScores.sort((a, b) => b.score - a.score);
+        totalScores.sort((a, b) => (b.score || 0) - (a.score || 0));
         const sortedScores = totalScores.slice(0, 3);
         const top1 = sortedScores[0] ? { name: getNick(sortedScores[0].jid), pts: sortedScores[0].score } : { name: 'لا يوجد', pts: 0 };
         const top2 = sortedScores[1] ? { name: getNick(sortedScores[1].jid), pts: sortedScores[1].score } : { name: 'لا يوجد', pts: 0 };
         const top3 = sortedScores[2] ? { name: getNick(sortedScores[2].jid), pts: sortedScores[2].score } : { name: 'لا يوجد', pts: 0 };
 
-        finishes.sort((a, b) => b.count - a.count);
+        finishes.sort((a, b) => (b.count || 0) - (a.count || 0));
         const topFinisherDoc = finishes[0];
         const topFinisher = topFinisherDoc ? { name: getNick(topFinisherDoc.jid), count: topFinisherDoc.count } : { name: 'لا يوجد', count: 0 };
 
