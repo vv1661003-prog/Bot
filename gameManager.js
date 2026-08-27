@@ -108,7 +108,7 @@ const questionsList = [
     { q: "نائب لاو؟", a: ["بيبو"] },
     { q: "ابن دراغون؟", a: ["لوفي"] },
     { q: "عين الصقر؟", a: ["ميهوك"] },
-    { q: "حبيبة كانيكي؟", a: ["توكا"] },
+    { q: "ح حبيبة كانيكي؟", a: ["توكا"] },
     { q: "شينيغامي لايت؟", a: ["ريوك"] },
     { q: "تلميذ غاي؟", a: ["لي", "روك"] },
     { q: "ابنة شانكس؟", a: ["اوتا"] },
@@ -159,14 +159,19 @@ function shuffleString(str) {
 }
 
 // ==========================================
-// دوال التعامل مع ملفات JSON المحلية
+// دوال التعامل مع ملفات JSON المحلية (محصنة)
 // ==========================================
 
 const readJson = (filename) => {
     try {
         const filePath = path.join(__dirname, filename);
         if (fs.existsSync(filePath)) {
-            return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+            const data = fs.readFileSync(filePath, 'utf8');
+            if (!data || data.trim() === '') return [];
+            const parsed = JSON.parse(data);
+            
+            if (Array.isArray(parsed)) return parsed;
+            if (parsed && typeof parsed === 'object') return [parsed];
         }
     } catch (e) {
         console.error(`خطأ في قراءة الملف ${filename}:`, e);
@@ -184,7 +189,7 @@ const writeJson = (filename, data) => {
 };
 
 // ==========================================
-// الدوال المحدثة للعمل محلياً بدل MongoDB
+// الدوال المحدثة للعمل محلياً
 // ==========================================
 
 async function getFormattedUser(rawJid) {
@@ -281,7 +286,6 @@ function checkAnswer(userText, validAnswers, currentType, userId) {
     }
 }
 
-// دالة اختيار صورة عشوائية محلياً (من stored_images.json و used_images.json)
 async function getAndMoveRandomImage() {
     try {
         let images = readJson('stored_images.json');
@@ -312,35 +316,43 @@ async function getAndMoveRandomImage() {
     }
 }
 
-// دالة تحديث النقاط والتفنيشات ووصف المجموعة باستخدام ملفات JSON المحلية
 async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
     try {
         const cleanWinner = winnerJid.split('@')[0].split(':')[0];
 
-        // 1. تحديث التفنيشات (finishes.json)
+        // 1. تحديث الفنشات باستخدام مطابقة الـ JID النظيفة
         let finishes = readJson('finishes.json');
-        let finishDoc = finishes.find(f => f.jid.startsWith(cleanWinner));
+        let finishDoc = finishes.find(f => {
+            const cleanF = f.jid.split('@')[0].split(':')[0];
+            return cleanF === cleanWinner;
+        });
+
         if (finishDoc) {
             finishDoc.count = (finishDoc.count || 0) + 1;
+            finishDoc.jid = winnerJid;
         } else {
             finishes.push({ jid: winnerJid, count: 1 });
         }
         writeJson('finishes.json', finishes);
 
-        // 2. تحديث النقاط التراكمية (total_scores.json)
+        // 2. تحديث النقاط
         let totalScores = readJson('total_scores.json');
         for (const [userJid, pts] of Object.entries(gameState.scores)) {
             const cleanUser = userJid.split('@')[0].split(':')[0];
-            let scoreDoc = totalScores.find(s => s.jid.startsWith(cleanUser));
+            let scoreDoc = totalScores.find(s => {
+                const cleanS = s.jid.split('@')[0].split(':')[0];
+                return cleanS === cleanUser;
+            });
             if (scoreDoc) {
                 scoreDoc.score = (scoreDoc.score || 0) + pts;
+                scoreDoc.jid = userJid;
             } else {
                 totalScores.push({ jid: userJid, score: pts });
             }
         }
         writeJson('total_scores.json', totalScores);
 
-        // 3. جلب الألقاب (registered_users.json)
+        // 3. جلب الألقاب والأسماء من registered_users.json
         const allUsers = readJson('registered_users.json');
         const userMap = {};
         allUsers.forEach(u => {
@@ -353,19 +365,16 @@ async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
             return userMap[clean] || `@${clean}`;
         };
 
-        // 4. ترتيب النقاط للأوائل
         totalScores.sort((a, b) => b.score - a.score);
         const sortedScores = totalScores.slice(0, 3);
         const top1 = sortedScores[0] ? { name: getNick(sortedScores[0].jid), pts: sortedScores[0].score } : { name: 'لا يوجد', pts: 0 };
         const top2 = sortedScores[1] ? { name: getNick(sortedScores[1].jid), pts: sortedScores[1].score } : { name: 'لا يوجد', pts: 0 };
         const top3 = sortedScores[2] ? { name: getNick(sortedScores[2].jid), pts: sortedScores[2].score } : { name: 'لا يوجد', pts: 0 };
 
-        // 5. ترتيب أعلى مفنش
         finishes.sort((a, b) => b.count - a.count);
         const topFinisherDoc = finishes[0];
         const topFinisher = topFinisherDoc ? { name: getNick(topFinisherDoc.jid), count: topFinisherDoc.count } : { name: 'لا يوجد', count: 0 };
 
-        // 6. صياغة وصف المجموعة الجديد
         const newDescription = `*╎ᏚᏢᎪᏒᎿᎪ ◟🔆◞ ╎*
 
 *˼‏⚖️˹ •⪼⏌ ⇂ فـكـرة الـجـروب ⇃⎾*
@@ -415,7 +424,6 @@ async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
 
 *╎ᏚᏢᎪᏒᎿᎪ ◟🔆◞ ╎*`;
 
-        // 7. تحديث الوصف عبر الواتساب
         await sock.groupUpdateDescription(chatId, newDescription);
 
     } catch (error) {
