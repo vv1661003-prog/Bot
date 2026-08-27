@@ -1,4 +1,5 @@
-const { RegisteredUser } = require('../gameManager');
+const fs = require('fs');
+const path = require('path');
 
 module.exports = {
     name: 'سجل',
@@ -15,17 +16,36 @@ module.exports = {
 
         try {
             const cleanTarget = target.split('@')[0].split(':')[0];
+            const filePath = path.join(__dirname, '../registered_users.json');
 
-            // التحديث إذا كان موجوداً أو الإنشاء إذا كان جديداً في MongoDB
-            await RegisteredUser.findOneAndUpdate(
-                { jid: new RegExp(`^${cleanTarget}`) },
-                { nickname: name, jid: target },
-                { upsert: true, new: true }
-            );
+            // قراءة الملف الحالي أو إنشاء مصفوفة فارغة إذا لم يكن موجوداً
+            let users = [];
+            if (fs.existsSync(filePath)) {
+                try {
+                    users = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                } catch (e) {
+                    users = [];
+                }
+            }
+
+            // البحث عما إذا كان المستخدم مسجلاً مسبقاً
+            let userIndex = users.findIndex(u => u.jid && u.jid.split('@')[0].split(':')[0] === cleanTarget);
+
+            if (userIndex !== -1) {
+                // تحديث اللقب والـ jid إذا كان موجوداً
+                users[userIndex].nickname = name;
+                users[userIndex].jid = target;
+            } else {
+                // إضافة مستخدم جديد إذا لم يكن موجوداً
+                users.push({ jid: target, nickname: name });
+            }
+
+            // كتابة البيانات المحدثة في الملف المحلي
+            fs.writeFileSync(filePath, JSON.stringify(users, null, 2), 'utf8');
 
             await sock.sendMessage(from, { text: `تم تسجيل اللقب: *${name}* بنجاح!` }, { quoted: msg });
         } catch (error) {
-            console.error('خطأ أثناء حفظ اللقب في MongoDB:', error);
+            console.error('خطأ أثناء حفظ اللقب محلياً:', error);
             await sock.sendMessage(from, { text: 'حدث خطأ أثناء حفظ البيانات.' }, { quoted: msg });
         }
     }

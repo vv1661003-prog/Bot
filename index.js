@@ -105,98 +105,18 @@ app.listen(PORT, () => {
 
 
 // ==============================
-// WhatsApp Bot & MongoDB Setup
+// WhatsApp Bot Setup (Local Auth)
 // ==============================
 
 const {
     default: makeWASocket,
-    DisconnectReason
+    DisconnectReason,
+    useMultiFileAuthState
 } = require('@whiskeysockets/baileys');
 
 const pino = require('pino');
 const fs = require('fs');
 const path = require('path');
-const mongoose = require('mongoose');
-
-// رابط اتصال MongoDB Atlas الخاص بك
-const MONGO_URI = 'mongodb+srv://vv1661003_db_user:yj089KXrnbXbKjPB@cluster0.sqcjwcp.mongodb.net/?appName=Cluster0';
-
-// إنشاء Schema لحفظ الجلسة داخل MongoDB
-const SessionSchema = new mongoose.Schema({
-    _id: String,
-    data: String
-});
-const SessionModel = mongoose.model('Session', SessionSchema);
-
-// مخصص لإدارة جلسة Baileys على MongoDB
-async function useMongoAuthState() {
-    await mongoose.connect(MONGO_URI);
-    console.log('⚡ متصل بـ MongoDB بنجاح!');
-
-    const writeData = async (data, id) => {
-        const information = JSON.stringify(data, (key, value) => {
-            if (value?.type === 'Buffer') {
-                return { type: 'Buffer', data: Array.from(value.data || []) };
-            }
-            return value;
-        });
-        await SessionModel.replaceOne({ _id: id }, { _id: id, data: information }, { upsert: true });
-    };
-
-    const readData = async (id) => {
-        try {
-            const result = await SessionModel.findOne({ _id: id });
-            if (!result) return null;
-            return JSON.parse(result.data, (key, value) => {
-                if (value?.type === 'Buffer') {
-                    return Buffer.from(value.data);
-                }
-                return value;
-            });
-        } catch {
-            return null;
-        }
-    };
-
-    const removeData = async (id) => {
-        await SessionModel.deleteOne({ _id: id });
-    };
-
-    const creds = (await readData('creds')) || require('@whiskeysockets/baileys').initAuthCreds();
-
-    return {
-        state: {
-            creds,
-            keys: {
-                get: async (type, ids) => {
-                    const data = {};
-                    await Promise.all(
-                        ids.map(async (id) => {
-                            let value = await readData(`${type}-${id}`);
-                            if (type === 'app-state-sync-key' && value) {
-                                value = require('@whiskeysockets/baileys').proto.Message.AppStateSyncKeyData.fromObject(value);
-                            }
-                            data[id] = value;
-                        })
-                    );
-                    return data;
-                },
-                set: async (data) => {
-                    const tasks = [];
-                    for (const category in data) {
-                        for (const id in data[category]) {
-                            const value = data[category][id];
-                            const key = `${category}-${id}`;
-                            tasks.push(value ? writeData(value, key) : removeData(key));
-                        }
-                    }
-                    await Promise.all(tasks);
-                }
-            }
-        },
-        saveCreds: () => writeData(creds, 'creds')
-    };
-}
 
 const {
     gameState,
@@ -222,22 +142,18 @@ let isBotOff = false;
 
 // ==============================
 // الاتصال بالواتساب
+// ==============================
 
 async function connectToWhatsApp() {
 
-    const { state, saveCreds } = await useMongoAuthState();
+    // حفظ الجلسة محلياً في مجلد اسمه session
+    const { state, saveCreds } = await useMultiFileAuthState('session');
 
     const sock = makeWASocket({
         auth: state,
-
-        // مهم: لا نطبع QR داخل Render Logs
         printQRInTerminal: false,
-
-        logger: pino({
-            level: 'silent'
-        })
+        logger: pino({ level: 'silent' })
     });
-
 
     sock.ev.on('creds.update', saveCreds);
 
@@ -248,19 +164,9 @@ async function connectToWhatsApp() {
 
     sock.ev.on('connection.update', async (update) => {
 
-        const {
-            connection,
-            lastDisconnect,
-            qr
-        } = update;
-
-
-        // ==============================
-        // QR جديد
-        // ==============================
+        const { connection, lastDisconnect, qr } = update;
 
         if (qr) {
-
             currentQR = qr;
 
             const renderUrl =
@@ -275,53 +181,26 @@ async function connectToWhatsApp() {
             console.log('====================================\n');
         }
 
-
-        // ==============================
-        // الاتصال مغلق
-        // ==============================
-
         if (connection === 'close') {
-
-            const statusCode =
-                lastDisconnect?.error?.output?.statusCode;
-
-            const shouldReconnect =
-                statusCode !== DisconnectReason.loggedOut;
-
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
             console.log('⚠️ تم قطع الاتصال...');
 
-
             if (shouldReconnect) {
-
                 console.log('🔄 جاري إعادة الاتصال...\n');
-
                 await sleep(5000);
-
                 connectToWhatsApp();
-
             } else {
-
-                console.log(
-                    '❌ تم تسجيل الخروج. يرجى إعادة مسح الـ QR.'
-                );
+                console.log('❌ تم تسجيل الخروج. يرجى حذف مجلد الجلسة وإعادة مسح الـ QR.');
             }
         }
-
-
-        // ==============================
-        // الاتصال ناجح
-        // ==============================
-
         else if (connection === 'open') {
-
             currentQR = null;
-
             console.log('\n====================================');
-            console.log('✅ تم الاتصال بالواتساب بنجاح ومحفوظ في MongoDB! البوت يعمل الآن ⚡');
+            console.log('✅ تم الاتصال بالواتساب بنجاح ومحفوظ محلياً! البوت يعمل الآن ⚡');
             console.log('====================================\n');
         }
-
     });
 
 
@@ -333,215 +212,92 @@ async function connectToWhatsApp() {
 
         if (type !== 'notify') return;
 
-
         for (const msg of messages) {
 
             if (!msg.message) continue;
 
-
             const from = msg.key.remoteJid;
-
 
             const text =
                 msg.message.conversation ||
                 msg.message.extendedTextMessage?.text ||
                 '';
 
-
             const senderLid =
                 msg.key.participant ||
                 msg.key.remoteJid;
-
 
             const senderJid =
                 msg.key.participantAlt ||
                 msg.key.remoteJid;
 
-
             if (!text.trim()) continue;
-
-            // ==============================
-            // التحقق من المالك
-            // ==============================
 
             const isOwner =
                 OWNER_LIDS.some(owner => {
-
-                    const cleanOwner =
-                        owner.split('@')[0];
-
+                    const cleanOwner = owner.split('@')[0];
                     return (
                         owner === senderLid ||
                         owner === senderJid ||
                         senderLid.includes(cleanOwner) ||
                         senderJid.includes(cleanOwner)
                     );
-
                 }) || msg.key.fromMe;
 
-
-            // ==============================
-            // قائمة النخبة
-            // ==============================
-
             let nukhbaList = [];
-
             try {
-
                 if (fs.existsSync('nukhba.json')) {
-
-                    nukhbaList =
-                        JSON.parse(
-                            fs.readFileSync(
-                                'nukhba.json',
-                                'utf8'
-                            )
-                        );
+                    nukhbaList = JSON.parse(fs.readFileSync('nukhba.json', 'utf8'));
                 }
-
             } catch (e) {
-
                 nukhbaList = [];
             }
-
 
             const isNukhba =
                 isOwner ||
                 nukhbaList.some(item => {
-
-                    const savedLid =
-                        typeof item === 'string'
-                            ? item
-                            : item.lid;
-
-                    const savedNum =
-                        typeof item === 'string'
-                            ? item.split('@')[0]
-                            : item.number;
-
-
+                    const savedLid = typeof item === 'string' ? item : item.lid;
+                    const savedNum = typeof item === 'string' ? item.split('@')[0] : item.number;
                     return (
                         savedLid === senderLid ||
                         savedLid === senderJid ||
                         senderLid.includes(savedNum) ||
                         senderJid.includes(savedNum)
                     );
-
                 });
 
-
-            const cleanText =
-                text.trim();
-
-
-            // ==============================
-            // أوامر المالك
-            // ==============================
+            const cleanText = text.trim();
 
             if (isOwner) {
-
                 if (cleanText === '.off') {
-
                     if (isBotOff) {
-
-                        return await sock.sendMessage(
-                            from,
-                            {
-                                text: '⚠️ البوت متوقف بالفعل!'
-                            },
-                            {
-                                quoted: msg
-                            }
-                        );
+                        return await sock.sendMessage(from, { text: '⚠️ البوت متوقف بالفعل!' }, { quoted: msg });
                     }
-
-
                     isBotOff = true;
-
-
-                    return await sock.sendMessage(
-                        from,
-                        {
-                            text: '🔇 تم إيقاف استقبال الأوامر.'
-                        },
-                        {
-                            quoted: msg
-                        }
-                    );
+                    return await sock.sendMessage(from, { text: '🔇 تم إيقاف استقبال الأوامر.' }, { quoted: msg });
                 }
-
 
                 if (cleanText === '.on') {
-
                     if (!isBotOff) {
-
-                        return await sock.sendMessage(
-                            from,
-                            {
-                                text: '✅ البوت شغال بالفعل!'
-                            },
-                            {
-                                quoted: msg
-                            }
-                        );
+                        return await sock.sendMessage(from, { text: '✅ البوت شغال بالفعل!' }, { quoted: msg });
                     }
-
-
                     isBotOff = false;
-
-
-                    return await sock.sendMessage(
-                        from,
-                        {
-                            text: '🔊 تم تفعيل البوت واستئناف استقبال الأوامر!'
-                        },
-                        {
-                            quoted: msg
-                        }
-                    );
+                    return await sock.sendMessage(from, { text: '🔊 تم تفعيل البوت واستئناف استقبال الأوامر!' }, { quoted: msg });
                 }
-
             }
-
-
-            // ==============================
-            // إذا البوت متوقف
-            // ==============================
 
             if (isBotOff) continue;
 
-
-            // ==============================
-            // معلومات الرسالة
-            // ==============================
-
-            const context =
-                msg.message?.extendedTextMessage?.contextInfo;
-
-
+            const context = msg.message?.extendedTextMessage?.contextInfo;
             const participantJid =
                 msg.key.participant ||
                 context?.participant ||
                 msg.key.participantAlt ||
                 senderLid;
 
-
-            // ==============================
-            // اللعبة
-            // ==============================
-
-            if (
-                gameState.active &&
-                from === gameState.chatId
-            ) {
-
-                await handleCountdownSpam(
-                    sock,
-                    participantJid,
-                    msg
-                );
+            if (gameState.active && from === gameState.chatId) {
+                await handleCountdownSpam(sock, participantJid, msg);
             }
-
 
             if (
                 gameState.active &&
@@ -549,10 +305,7 @@ async function connectToWhatsApp() {
                 gameState.acceptingAnswers &&
                 from === gameState.chatId
             ) {
-
-                const userText =
-                    text.trim();
-
+                const userText = text.trim();
 
                 if (
                     checkAnswer(
@@ -562,136 +315,71 @@ async function connectToWhatsApp() {
                         participantJid
                     )
                 ) {
-
                     gameState.acceptingAnswers = false;
 
-
                     if (gameState.roundTimer) {
-
-                        clearTimeout(
-                            gameState.roundTimer
-                        );
+                        clearTimeout(gameState.roundTimer);
                     }
-
 
                     gameState.scores[participantJid] =
                         (gameState.scores[participantJid] || 0) + 1;
 
-
-                    const currentPoints =
-                        gameState.scores[participantJid];
-
+                    const currentPoints = gameState.scores[participantJid];
 
                     const mentions = [];
                     const scoreLines = [];
 
                     for (const [jid, pts] of Object.entries(gameState.scores)) {
                         const userInfo = await getFormattedUser(jid);
-
                         if (userInfo.isMention) {
                             mentions.push(userInfo.jid);
                         }
-
                         scoreLines.push(`${userInfo.text} ${pts}`);
                     }
-
 
                     await sock.sendMessage(
                         from,
                         {
                             text: scoreLines.join('\n'),
-                            mentions:
-                                mentions.length > 0
-                                    ? mentions
-                                    : undefined
+                            mentions: mentions.length > 0 ? mentions : undefined
                         },
-                        {
-                            quoted: msg
-                        }
+                        { quoted: msg }
                     );
 
-
-                    // ==============================
-                    // فوز اللاعب والتفنيش
-                    // ==============================
-
-                    if (
-                        currentPoints >=
-                        gameState.targetPoints
-                    ) {
-
+                    if (currentPoints >= gameState.targetPoints) {
                         await sleep(500);
 
-                        const userInfo =
-                            await getFormattedUser(
-                                participantJid
-                            );
+                        const userInfo = await getFormattedUser(participantJid);
 
                         await sock.sendMessage(
                             from,
                             {
-                                text:
-                                    userInfo.isMention
-                                        ? `@${participantJid.split('@')[0]} فنشششش`
-                                        : `${userInfo.text} فنشششش`,
-
-                                mentions:
-                                    userInfo.isMention
-                                        ? [participantJid]
-                                        : []
+                                text: userInfo.isMention
+                                    ? `@${participantJid.split('@')[0]} فنشششش`
+                                    : `${userInfo.text} فنشششش`,
+                                mentions: userInfo.isMention ? [participantJid] : []
                             }
                         );
 
-                        // تحديث النقاط التراكمية، الفنشات، وتحديث وصف المجموعة
                         await handleFinishAndUpdateGroup(sock, from, participantJid);
 
-                        // إنهاء الجيم وتصفير النقاط الحالية
                         gameState.active = false;
                         gameState.scores = {};
-                    }
-
-                    else {
-
+                    } else {
                         advanceType();
-
                         await sleep(500);
-
                         nextRound(sock);
                     }
-
                 }
-
             }
 
-
-            // ==============================
-            // الأوامر (تنفذ للجميع الآن)
-            // ==============================
-
-            const args =
-                cleanText.split(/ +/);
-
-
-            const commandName =
-                args.shift().toLowerCase();
-
-
-            const commandPath =
-                path.join(
-                    __dirname,
-                    'amr',
-                    `${commandName}.js`
-                );
-
+            const args = cleanText.split(/ +/);
+            const commandName = args.shift().toLowerCase();
+            const commandPath = path.join(__dirname, 'amr', `${commandName}.js`);
 
             if (fs.existsSync(commandPath)) {
-
                 try {
-
-                    const command =
-                        require(commandPath);
-
-
+                    const command = require(commandPath);
                     await command.execute({
                         sock,
                         msg,
@@ -701,27 +389,15 @@ async function connectToWhatsApp() {
                         isOwner,
                         isNukhba
                     });
-
-                }
-
-                catch (err) {
-
-                    console.error(
-                        `خطأ أثناء تنفيذ الأمر ${commandName}:`,
-                        err
-                    );
+                } catch (err) {
+                    console.error(`خطأ أثناء تنفيذ الأمر ${commandName}:`, err);
                 }
             }
-
         }
-
     });
-
 }
-
 
 // ==============================
 // تشغيل البوت
 // ==============================
-
 connectToWhatsApp();

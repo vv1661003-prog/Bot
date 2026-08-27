@@ -1,10 +1,5 @@
-const mongoose = require('mongoose');
-
-// تعريف جدول النخبة في قاعدة البيانات إذا لم يكن موجوداً
-const NukhbaUser = mongoose.models.NukhbaUser || mongoose.model('NukhbaUser', new mongoose.Schema({
-    lid: { type: String, required: true, unique: true },
-    number: { type: String, required: true }
-}));
+const fs = require('fs');
+const path = require('path');
 
 module.exports = {
     name: 'اضف',
@@ -24,16 +19,34 @@ module.exports = {
 
         try {
             const cleanTarget = targetLid.split('@')[0].split(':')[0];
+            const filePath = path.join(__dirname, '../nukhba.json');
 
-            // التحقق مما إذا كان المستخدم موجوداً مسبقاً في النخبة
-            const exists = await NukhbaUser.findOne({ lid: new RegExp(`^${cleanTarget}`) });
+            // قراءة ملف nukhba.json المحلي
+            let nukhbaUsers = [];
+            if (fs.existsSync(filePath)) {
+                try {
+                    nukhbaUsers = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                } catch (e) {
+                    nukhbaUsers = [];
+                }
+            }
+
+            // التحقق مما إذا كان المستخدم موجوداً مسبقاً
+            const exists = nukhbaUsers.some(user => {
+                const userClean = (user.lid || user.jid || '').split('@')[0].split(':')[0];
+                return userClean === cleanTarget;
+            });
+
             if (exists) return;
 
-            // إضافة المستخدم لقاعدة البيانات
-            await NukhbaUser.create({
+            // إضافة المستخدم بنفس الهيكلية (lid و number)
+            nukhbaUsers.push({
                 lid: targetLid,
                 number: targetNumber
             });
+
+            // حفظ التحديثات في ملف nukhba.json الأصلي
+            fs.writeFileSync(filePath, JSON.stringify(nukhbaUsers, null, 2), 'utf8');
 
             if (isReply) {
                 const quotedMsgKey = {

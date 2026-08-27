@@ -1,40 +1,5 @@
-const mongoose = require('mongoose');
-
-// ==========================================
-// 1. تعريف مخططات MongoDB (Mongoose Schemas)
-// ==========================================
-
-// مخطط المستخدمين المسجلين (الألقاب)
-const RegisteredUser = mongoose.models.RegisteredUser || mongoose.model('RegisteredUser', new mongoose.Schema({
-    jid: { type: String, required: true, unique: true },
-    nickname: { type: String, required: true }
-}));
-
-// مخطط النقاط التراكمية
-const TotalScore = mongoose.models.TotalScore || mongoose.model('TotalScore', new mongoose.Schema({
-    jid: { type: String, required: true, unique: true },
-    score: { type: Number, default: 0 }
-}));
-
-// مخطط الفنشات
-const Finish = mongoose.models.Finish || mongoose.model('Finish', new mongoose.Schema({
-    jid: { type: String, required: true, unique: true },
-    count: { type: Number, default: 0 }
-}));
-
-// مخطط الصور (المخزنة والمستخدمة)
-const ImageSchema = new mongoose.Schema({
-    imageId: { type: String, required: true, unique: true },
-    names: [String],
-    messageObject: Object,
-    isUsed: { type: Boolean, default: false } // تمييز الصور المستخدمة عن غير المستخدمة
-});
-const GameImage = mongoose.models.GameImage || mongoose.model('GameImage', ImageSchema);
-
-
-// ==========================================
-// 2. القوائم والبيانات الثابتة
-// ==========================================
+const fs = require('fs');
+const path = require('path');
 
 const animeList = [
     "استا", "اينوي", "اينو", "ارمين", "ايتشيغو", "ايروين", "ايرين", "ابو", "ايلين", "اوي",
@@ -194,15 +159,39 @@ function shuffleString(str) {
 }
 
 // ==========================================
-// 3. الدوال المعدلة لاستخدام MongoDB
+// دوال التعامل مع ملفات JSON المحلية
+// ==========================================
+
+const readJson = (filename) => {
+    try {
+        const filePath = path.join(__dirname, filename);
+        if (fs.existsSync(filePath)) {
+            return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        }
+    } catch (e) {
+        console.error(`خطأ في قراءة الملف ${filename}:`, e);
+    }
+    return [];
+};
+
+const writeJson = (filename, data) => {
+    try {
+        const filePath = path.join(__dirname, filename);
+        fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf8');
+    } catch (e) {
+        console.error(`خطأ في كتابة الملف ${filename}:`, e);
+    }
+};
+
+// ==========================================
+// الدوال المحدثة للعمل محلياً بدل MongoDB
 // ==========================================
 
 async function getFormattedUser(rawJid) {
     try {
         const cleanJid = rawJid.split('@')[0].split(':')[0];
-        const userDoc = await RegisteredUser.findOne({
-            $or: [{ jid: rawJid }, { jid: new RegExp(`^${cleanJid}`) }]
-        });
+        const users = readJson('registered_users.json');
+        const userDoc = users.find(u => u.jid === rawJid || u.jid.startsWith(cleanJid));
 
         if (userDoc && userDoc.nickname) {
             return { text: userDoc.nickname, isMention: false };
@@ -292,58 +281,67 @@ function checkAnswer(userText, validAnswers, currentType, userId) {
     }
 }
 
-// دالة اختيار صورة عشوائية ومزامنتها مع MongoDB
+// دالة اختيار صورة عشوائية محلياً (من stored_images.json و used_images.json)
 async function getAndMoveRandomImage() {
     try {
-        let availableCount = await GameImage.countDocuments({ isUsed: false });
+        let images = readJson('stored_images.json');
+        let usedImages = readJson('used_images.json');
 
-        // إذا انتهت الصور غير المستخدمة، نُرجع كل الصور كـ غير مستخدمة لإعادة الدورة
-        if (availableCount === 0) {
-            await GameImage.updateMany({}, { $set: { isUsed: false } });
-            availableCount = await GameImage.countDocuments({ isUsed: false });
+        if (!images || images.length === 0) return null;
+
+        let available = images.filter(img => !usedImages.includes(img.imageId));
+
+        if (available.length === 0) {
+            usedImages = [];
+            writeJson('used_images.json', usedImages);
+            available = images;
         }
 
-        if (availableCount === 0) return null;
-
-        const randomIndex = Math.floor(Math.random() * availableCount);
-        const selectedImage = await GameImage.findOne({ isUsed: false }).skip(randomIndex);
+        const randomIndex = Math.floor(Math.random() * available.length);
+        const selectedImage = available[randomIndex];
 
         if (selectedImage) {
-            selectedImage.isUsed = true;
-            await selectedImage.save();
+            usedImages.push(selectedImage.imageId);
+            writeJson('used_images.json', usedImages);
         }
 
         return selectedImage;
     } catch (err) {
-        console.error("خطأ في جلب الصور من MongoDB:", err);
+        console.error("خطأ في جلب الصور محلياً:", err);
         return null;
     }
 }
 
-// دالة تحديث النقاط التراكمية، التفنيشات والوصف في MongoDB
+// دالة تحديث النقاط والتفنيشات ووصف المجموعة باستخدام ملفات JSON المحلية
 async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
     try {
         const cleanWinner = winnerJid.split('@')[0].split(':')[0];
 
-        // 1. تحديث التفنيشات للفائز
-        await Finish.findOneAndUpdate(
-            { jid: new RegExp(`^${cleanWinner}`) },
-            { $inc: { count: 1 }, $setOnInsert: { jid: winnerJid } },
-            { upsert: true, new: true }
-        );
+        // 1. تحديث التفنيشات (finishes.json)
+        let finishes = readJson('finishes.json');
+        let finishDoc = finishes.find(f => f.jid.startsWith(cleanWinner));
+        if (finishDoc) {
+            finishDoc.count = (finishDoc.count || 0) + 1;
+        } else {
+            finishes.push({ jid: winnerJid, count: 1 });
+        }
+        writeJson('finishes.json', finishes);
 
-        // 2. تحديث النقاط التراكمية للجميع
+        // 2. تحديث النقاط التراكمية (total_scores.json)
+        let totalScores = readJson('total_scores.json');
         for (const [userJid, pts] of Object.entries(gameState.scores)) {
             const cleanUser = userJid.split('@')[0].split(':')[0];
-            await TotalScore.findOneAndUpdate(
-                { jid: new RegExp(`^${cleanUser}`) },
-                { $inc: { score: pts }, $setOnInsert: { jid: userJid } },
-                { upsert: true, new: true }
-            );
+            let scoreDoc = totalScores.find(s => s.jid.startsWith(cleanUser));
+            if (scoreDoc) {
+                scoreDoc.score = (scoreDoc.score || 0) + pts;
+            } else {
+                totalScores.push({ jid: userJid, score: pts });
+            }
         }
+        writeJson('total_scores.json', totalScores);
 
-        // 3. جلب الألقاب المحدثة
-        const allUsers = await RegisteredUser.find({});
+        // 3. جلب الألقاب (registered_users.json)
+        const allUsers = readJson('registered_users.json');
         const userMap = {};
         allUsers.forEach(u => {
             const clean = u.jid.split('@')[0].split(':')[0];
@@ -355,17 +353,19 @@ async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
             return userMap[clean] || `@${clean}`;
         };
 
-        // 4. ترتيب النقاط التراكمية للأوائل
-        const sortedScores = await TotalScore.find({}).sort({ score: -1 }).limit(3);
+        // 4. ترتيب النقاط للأوائل
+        totalScores.sort((a, b) => b.score - a.score);
+        const sortedScores = totalScores.slice(0, 3);
         const top1 = sortedScores[0] ? { name: getNick(sortedScores[0].jid), pts: sortedScores[0].score } : { name: 'لا يوجد', pts: 0 };
         const top2 = sortedScores[1] ? { name: getNick(sortedScores[1].jid), pts: sortedScores[1].score } : { name: 'لا يوجد', pts: 0 };
         const top3 = sortedScores[2] ? { name: getNick(sortedScores[2].jid), pts: sortedScores[2].score } : { name: 'لا يوجد', pts: 0 };
 
         // 5. ترتيب أعلى مفنش
-        const topFinisherDoc = await Finish.findOne({}).sort({ count: -1 });
+        finishes.sort((a, b) => b.count - a.count);
+        const topFinisherDoc = finishes[0];
         const topFinisher = topFinisherDoc ? { name: getNick(topFinisherDoc.jid), count: topFinisherDoc.count } : { name: 'لا يوجد', count: 0 };
 
-        // 6. صياغة النص الجديد للوصف
+        // 6. صياغة وصف المجموعة الجديد
         const newDescription = `*╎ᏚᏢᎪᏒᎿᎪ ◟🔆◞ ╎*
 
 *˼‏⚖️˹ •⪼⏌ ⇂ فـكـرة الـجـروب ⇃⎾*
@@ -415,11 +415,11 @@ async function handleFinishAndUpdateGroup(sock, chatId, winnerJid) {
 
 *╎ᏚᏢᎪᏒᎿᎪ ◟🔆◞ ╎*`;
 
-        // 7. تحديث وصف المجموعة
+        // 7. تحديث الوصف عبر الواتساب
         await sock.groupUpdateDescription(chatId, newDescription);
 
     } catch (error) {
-        console.error('خطأ أثناء تحديث النقاط والتصنيف في وصف المجموعة:', error);
+        console.error('خطأ أثناء تحديث النقاط والتصنيف في وصف المجموعة محلياً:', error);
     }
 }
 
@@ -577,10 +577,5 @@ module.exports = {
     handleFinishAndUpdateGroup,
     nextRound,
     advanceType,
-    defaultTypes,
-    // تصدير النماذج لتعمل في مجلد amr والأوامر الخارجية
-    RegisteredUser,
-    TotalScore,
-    Finish,
-    GameImage
+    defaultTypes
 };

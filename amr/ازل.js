@@ -1,9 +1,5 @@
-const mongoose = require('mongoose');
-
-const NukhbaUser = mongoose.models.NukhbaUser || mongoose.model('NukhbaUser', new mongoose.Schema({
-    lid: { type: String, required: true, unique: true },
-    number: { type: String, required: true }
-}));
+const fs = require('fs');
+const path = require('path');
 
 module.exports = {
     name: 'ازل',
@@ -18,7 +14,26 @@ module.exports = {
 
         try {
             const cleanTarget = targetLid.split('@')[0].split(':')[0];
-            await NukhbaUser.deleteOne({ lid: new RegExp(`^${cleanTarget}`) });
+            const filePath = path.join(__dirname, '../nukhba.json');
+
+            // قراءة ملف nukhba.json المحلي
+            let nukhbaUsers = [];
+            if (fs.existsSync(filePath)) {
+                try {
+                    nukhbaUsers = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                } catch (e) {
+                    nukhbaUsers = [];
+                }
+            }
+
+            // تصفية القائمة لإزالة العضو المطابق للـ cleanTarget
+            const updatedUsers = nukhbaUsers.filter(user => {
+                const userClean = (user.lid || user.jid || '').split('@')[0].split(':')[0];
+                return userClean !== cleanTarget;
+            });
+
+            // حفظ القائمة الجديدة بعد الحذف في ملف nukhba.json
+            fs.writeFileSync(filePath, JSON.stringify(updatedUsers, null, 2), 'utf8');
 
             const targetNumber = targetLid.split('@')[0];
 
@@ -33,7 +48,7 @@ module.exports = {
                 await sock.sendMessage(from, { text: `*تمت إزالة @${targetNumber} من قائمة النخبة*`, mentions: [targetLid] }, { quoted: msg });
             }
         } catch (error) {
-            console.error('خطأ أثناء إزالة عضو من النخبة:', error);
+            console.error('خطأ أثناء إزالة عضو من النخبة محلياً:', error);
         }
     }
 };
